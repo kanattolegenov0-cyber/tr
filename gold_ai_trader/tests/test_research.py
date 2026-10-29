@@ -68,3 +68,12 @@ def test_research_code_contains_no_execution_api():
         tree = ast.parse(path.read_text(encoding='utf-8'))
         assert not any(isinstance(node, ast.Attribute) and node.attr in forbidden for node in ast.walk(tree)), str(path)
         assert not any(isinstance(node, ast.ImportFrom) and node.module and (node.module == 'src' or node.module.startswith('src.')) for node in ast.walk(tree))
+
+
+def test_finds_xm_gold_symbol(monkeypatch):
+    fake = SimpleNamespace(initialize=lambda: True, account_info=lambda: SimpleNamespace(trade_mode=0), ACCOUNT_TRADE_MODE_DEMO=0, shutdown=lambda: None, symbols_get=lambda: [SimpleNamespace(name=n) for n in ('GOLD', 'XAUUSD.a', 'EURUSD')])
+    monkeypatch.setattr('gold_ai_trader.mt5_reader.importlib.import_module', lambda _: fake)
+    reader = MT5Reader()
+    reader.connect()
+    assert reader.symbols() == ['GOLD', 'XAUUSD.a']
+    reader.close()

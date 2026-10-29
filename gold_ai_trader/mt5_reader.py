@@ -33,7 +33,7 @@ class MT5Reader:
         values = self._mt.symbols_get()
         if values is None:
             raise MT5Unavailable('Не удалось получить инструменты')
-        return [s.name for s in values if 'XAUUSD' in s.name.upper()]
+        return [s.name for s in values if 'XAUUSD' in s.name.upper() or s.name.upper() == 'GOLD']
 
     def candles(self, symbol: str, timeframe: str, count: int):
         if not self._connected:
