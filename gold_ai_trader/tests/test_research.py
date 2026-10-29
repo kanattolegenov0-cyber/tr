@@ -91,3 +91,13 @@ def test_forecast_labels_exclude_gaps_and_future():
     data.loc[251:, 'timestamp'] += pd.Timedelta(hours=2)
     _, target, _ = prepare(data, 4, .3)
     assert target.iloc[247:251].isna().all()
+
+
+def test_walk_forward_ignores_later_candles():
+    from gold_ai_trader.research import period
+    rng = np.random.default_rng(19)
+    prices = 2000 + np.cumsum(rng.normal(0, 1, 1500))
+    data = validate(pd.DataFrame({'timestamp':pd.date_range('2024-01-01', periods=1500, freq='15min', tz='UTC'), 'open':prices, 'high':prices+1, 'low':prices-1, 'close':prices}))
+    original = period(data, 600, 750, 900, cost=.3)
+    data.loc[900:, ['open','high','low','close']] += 1000
+    assert period(data, 600, 750, 900, cost=.3) == original

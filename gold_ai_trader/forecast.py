@@ -27,7 +27,7 @@ def prepare(df, horizon, cost):
     # Цель — движение close, а не исполнимая доходность. Пропуски в будущем горизонте исключаются.
     change = d.close.shift(-horizon) - d.close
     elapsed = d.timestamp.shift(-horizon) - d.timestamp
-    target = pd.Series(np.where(change > cost, 2, np.where(change < -cost, 0, 1)), index=d.index).where(change.notna() & (elapsed == pd.Timedelta(minutes=15*horizon)))
+    target = pd.Series(np.where(change > cost, 2, np.where(change < -cost, 0, 1)), index=d.index).where(change.notna() & (elapsed.dt.total_seconds() == 900*horizon))
     valid = x.notna().all(axis=1) & target.notna()
     return x, target, valid
 
