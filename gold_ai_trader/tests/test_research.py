@@ -77,3 +77,17 @@ def test_finds_xm_gold_symbol(monkeypatch):
     reader.connect()
     assert reader.symbols() == ['GOLD', 'XAUUSD.a']
     reader.close()
+
+
+def test_forecast_labels_exclude_gaps_and_future():
+    from gold_ai_trader.forecast import prepare
+    data = frame(300)
+    x, target, valid = prepare(data, 4, .3)
+    modified = data.copy()
+    modified.loc[250:, ['open','high','low','close']] += 100
+    x2, _, _ = prepare(modified, 4, .3)
+    pd.testing.assert_frame_equal(x.iloc[:250], x2.iloc[:250])
+    assert target.iloc[-4:].isna().all()
+    data.loc[251:, 'timestamp'] += pd.Timedelta(hours=2)
+    _, target, _ = prepare(data, 4, .3)
+    assert target.iloc[247:251].isna().all()
