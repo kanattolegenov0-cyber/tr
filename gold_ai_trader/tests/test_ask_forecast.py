@@ -44,8 +44,11 @@ def test_stale_or_short_history_is_rejected_before_model_fit():
         analyze(frame.iloc[1:], spec, quote, now=now)
     old = frame.copy()
     old["timestamp"] -= pd.Timedelta(days=1)
-    with pytest.raises(ValueError, match="устарела"):
+    with pytest.raises(ValueError, match="устарела") as error:
         analyze(old, spec, quote, now=now)
+    assert "Сейчас UTC" in str(error.value)
+    assert "2026-11-02T12:30:00+00:00" in str(error.value)
+    assert "Котировка свежая, но история нет" in str(error.value)
     quote["time_utc"] = "2026-11-02T12:20:00Z"
     with pytest.raises(ValueError, match="котировка устарела"):
         analyze(frame, spec, quote, now=now)

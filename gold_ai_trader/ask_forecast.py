@@ -61,14 +61,27 @@ def analyze(frame: pd.DataFrame, spec: dict, quote: dict, *, now=None,
     if now.tzinfo is None:
         raise ValueError("Текущее время должно содержать часовой пояс")
     now = now.tz_convert("UTC")
-    last_close = frame.timestamp.iloc[-1].to_pydatetime() + timedelta(minutes=15)
-    if not 0 <= (now.to_pydatetime() - last_close).total_seconds() <= 1800:
-        raise ValueError("Последняя закрытая свеча устарела или имеет время из будущего")
+    last_open = frame.timestamp.iloc[-1]
+    last_close = last_open.to_pydatetime() + timedelta(minutes=15)
     tick_time = pd.Timestamp(quote["time_utc"])
     if tick_time.tzinfo is None:
         raise ValueError("Время котировки должно содержать часовой пояс")
-    if not 0 <= (now - tick_time).total_seconds() <= 300:
-        raise ValueError("Текущая котировка устарела или имеет время из будущего")
+    tick_time = tick_time.tz_convert("UTC")
+    bar_age = (now.to_pydatetime() - last_close).total_seconds()
+    tick_age = (now - tick_time).total_seconds()
+    clocks = (f"Сейчас UTC {now.isoformat()}, последняя свеча открыта {last_open.isoformat()}, "
+              f"её закрытие {last_close.isoformat()}, котировка UTC {tick_time.isoformat()}.")
+    if bar_age < 0:
+        raise ValueError(f"Последняя свеча имеет время из будущего. {clocks} Проверьте дату и время Windows и терминала MT5.")
+    if bar_age > 1800:
+        hint = ("Котировка тоже устарела: проверьте соединение MT5 и часы работы рынка."
+                if tick_age > 300 else
+                "Котировка свежая, но история нет: откройте график инструмента M15 и дождитесь обновления свечей.")
+        raise ValueError(f"Последняя закрытая свеча устарела на {bar_age / 60:.0f} мин. {clocks} {hint}")
+    if tick_age < 0:
+        raise ValueError(f"Котировка имеет время из будущего. {clocks} Проверьте дату и время Windows и терминала MT5.")
+    if tick_age > 300:
+        raise ValueError(f"Текущая котировка устарела на {tick_age / 60:.0f} мин. {clocks} Проверьте соединение MT5 и часы работы рынка.")
     point = float(spec["point"])
     tick_size = float(spec["trade_tick_size"])
     digits = spec["digits"]
