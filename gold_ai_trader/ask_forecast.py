@@ -88,6 +88,12 @@ def analyze(frame: pd.DataFrame, spec: dict, quote: dict, *, now=None,
         raise ValueError(f"Котировка имеет время из будущего. {clocks} Проверьте дату и время Windows и сдвиг времени MT5.")
     if tick_age > 300:
         raise ValueError(f"Текущая котировка устарела на {tick_age / 60:.0f} мин. {clocks} Проверьте соединение MT5 и часы работы рынка.")
+    # The bar immediately after the last closed one is already in progress.
+    # A command issued at any point in that bar can only target its next opening.
+    entry_delay = 2
+    future_entry = last_open + timedelta(minutes=15 * entry_delay)
+    if now.to_pydatetime() >= future_entry:
+        raise ValueError(f"Следующее открытие {future_entry.isoformat()} уже прошло, а новая закрытая свеча ещё не получена. {clocks}")
     point = float(spec["point"])
     tick_size = float(spec["trade_tick_size"])
     digits = spec["digits"]
@@ -96,11 +102,12 @@ def analyze(frame: pd.DataFrame, spec: dict, quote: dict, *, now=None,
     if not isinstance(digits, int) or not 0 <= digits <= 10:
         raise ValueError("В спецификации MT5 отсутствует корректный digits")
     bid, ask = float(quote["bid"]), float(quote["ask"])
-    x, y, valid = prepare(frame, point, horizon, atr_factor, slippage, commission_per_unit)
+    x, y, valid = prepare(frame, point, horizon, atr_factor, slippage,
+                          commission_per_unit, entry_delay=entry_delay)
     n = len(frame)
-    check = period(x, y, valid, int(n*.6), int(n*.8), n, horizon)
+    check = period(x, y, valid, int(n*.6), int(n*.8), n, horizon, entry_delay)
     # Fixed Logistic model: the last test block is used for evaluation, not selection.
-    purge = horizon + 1
+    purge = horizon + entry_delay
     training = valid & (x.index < int(n*.8) - purge)
     calibration = valid & (x.index >= int(n*.8))
     if min(int(training.sum()), int(calibration.sum())) < 60:
@@ -131,6 +138,7 @@ def analyze(frame: pd.DataFrame, spec: dict, quote: dict, *, now=None,
     return {
         "symbol": spec["name"], "last_bar_utc": last_open.isoformat(),
         "quote_utc": tick_time.isoformat(), "bid": bid, "ask": ask,
+        "future_entry_utc": future_entry.isoformat(),
         "mt5_offset_hours": mt5_offset_hours,
         "bars": len(frame), "valid": int(valid.sum()), "point": point, "digits": digits,
         "atr": atr, "horizon": horizon, "atr_factor": atr_factor,
@@ -151,7 +159,7 @@ def format_report(result: dict) -> str:
         f"Последняя свеча UTC: {result['last_bar_utc']}; котировка UTC: {result['quote_utc']} "
         f"(сдвиг меток MT5 {result['mt5_offset_hours']:+d} ч).",
         f"Bid={result['bid']:.{decimals}f}; Ask={result['ask']:.{decimals}f}; point={result['point']}; ATR={result['atr']:.{decimals}f}.",
-        f"Оценка движения через {result['horizon']} свечи после следующего открытия: " +
+        f"Оценка движения за {result['horizon']} свечи после будущего открытия {result['future_entry_utc']}: " +
         ", ".join(f"{name}={probabilities[name]:.1%}" for name in CLASSES),
         f"Наибольшая оценка модели: {max(CLASSES, key=probabilities.get)}; это не торговая команда.",
         "HOLD в этой строке означает, что ни BUY, ни SELL не превысили порог ATR после оценённых издержек.",
@@ -159,12 +167,12 @@ def format_report(result: dict) -> str:
         f"Logistic log loss={validation['logistic']['log_loss']:.4f}, Brier={validation['logistic']['brier']:.4f}; " +
         f"baseline log loss={validation['baseline']['log_loss']:.4f}, Brier={validation['baseline']['brier']:.4f} (меньше лучше).",
         "Классы проверки: " + ", ".join(f"{name}={validation['class_counts'][name]}" for name in CLASSES),
-        f"Расчётные уровни от текущей котировки: SL={result['sl_atr']} ATR, TP={result['reward_risk']}:1 к риску.",
+        f"Предварительные уровни от текущей котировки: SL={result['sl_atr']} ATR, TP={result['reward_risk']}:1 к риску.",
     ]
     for name in ("BUY", "SELL"):
         item = result["levels"][name]
         lines.append(f"  {name}: вход {item['entry']:.{decimals}f}; SL {item['sl']:.{decimals}f}; TP {item['tp']:.{decimals}f}")
-    lines.append("Это ориентиры от текущих Bid/Ask; цена следующего входа, исполнение SL/TP и прибыль не гарантированы.")
+    lines.append("Уровни нужно пересчитать от фактической цены на будущем открытии; исполнение SL/TP и прибыль не гарантированы.")
     lines.append("Статус: HOLD — " + ("; ".join(result["reasons"]) if result["reasons"] else
                                        "качество вероятностей и доходность реальной сделки не доказаны"))
     lines.append("Программа не отправляет ордера в MT5.")

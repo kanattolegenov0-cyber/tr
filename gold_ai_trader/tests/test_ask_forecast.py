@@ -31,11 +31,13 @@ def test_command_core_outputs_three_probabilities_and_context():
     report = analyze(frame, spec, quote, now=now)
     assert report["bars"] == 10000
     assert report["validation"]["test"] > 1000
+    assert report["future_entry_utc"] == "2026-11-02T12:45:00+00:00"
     assert set(report["probabilities"]) == {"SELL", "HOLD", "BUY"}
     assert sum(report["probabilities"].values()) == pytest.approx(1)
     text = format_report(report)
     assert "Статус: HOLD" in text
     assert "SL" in text and "TP" in text
+    assert "будущего открытия" in text
 
 
 def test_stale_or_short_history_is_rejected_before_model_fit():
@@ -64,6 +66,7 @@ def test_confirmed_two_hour_mt5_offset_keeps_freshness_checks():
     assert result["mt5_offset_hours"] == 2
     assert result["last_bar_utc"] == "2026-11-02T12:15:00+00:00"
     assert result["quote_utc"] == "2026-11-02T12:30:00+00:00"
+    assert result["future_entry_utc"] == "2026-11-02T12:45:00+00:00"
     quote["time_utc"] = "2026-11-02T13:30:00Z"
     with pytest.raises(ValueError, match="котировка устарела"):
         analyze(frame, spec, quote, now=now, mt5_offset_hours=2)

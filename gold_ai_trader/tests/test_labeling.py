@@ -24,6 +24,15 @@ def test_entry_next_bar_and_correct_side_spreads():
     assert out.label.iloc[-5:].isna().all()
 
 
+def test_on_demand_entry_waits_for_future_opening():
+    df = data()
+    out = label(df, point=.01, horizon=4, atr_factor=0, entry_delay=2)
+    assert out.loc[20, 'entry_time'] == df.timestamp.iloc[22]
+    assert out.loc[20, 'exit_time'] == df.timestamp.iloc[26]
+    assert out.loc[20, 'long_net'] == pytest.approx(4 - .2)
+    assert out.label.iloc[-6:].isna().all()
+
+
 def test_zero_movement_and_costs_returns_hold():
     df=data(); df[['open','close']]=2000.; df['high']=2001.; df['low']=1999.
     out=label(df,point=.01,atr_factor=.1)

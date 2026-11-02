@@ -52,8 +52,8 @@ def features(frame: pd.DataFrame, point: float) -> pd.DataFrame:
 
 def prepare(frame: pd.DataFrame, point: float, horizon: int = 4,
             atr_factor: float = .1, slippage: float = 0,
-            commission_per_unit: float = 0):
-    outcomes = label(frame, point, horizon, atr_factor, slippage, commission_per_unit)
+            commission_per_unit: float = 0, entry_delay: int = 1):
+    outcomes = label(frame, point, horizon, atr_factor, slippage, commission_per_unit, entry_delay)
     x = features(frame, point)
     y = outcomes.label.map(TARGET).astype("float")
     valid = y.notna() & x.notna().all(axis=1)
@@ -77,14 +77,14 @@ def _scores(actual, probabilities):
 
 
 def period(x, y, valid, start_cal: int, start_test: int, end_test: int,
-           horizon: int = 4):
+           horizon: int = 4, entry_delay: int = 1):
     """Fit on the past, calibrate later, and score an untouched later block.
 
-    The purge covers the entry at i+1 and exit at i+1+horizon.
+    The purge covers the delayed entry and its exit after the horizon.
     """
-    if horizon < 1 or not (0 < start_cal < start_test < end_test <= len(x)):
+    if horizon < 1 or entry_delay < 1 or not (0 < start_cal < start_test < end_test <= len(x)):
         raise ValueError("Неверные границы временных блоков")
-    purge = horizon + 1
+    purge = horizon + entry_delay
     index = x.index
     masks = (
         valid & (index < start_cal - purge),
