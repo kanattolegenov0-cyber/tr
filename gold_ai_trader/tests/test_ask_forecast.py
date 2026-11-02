@@ -52,3 +52,18 @@ def test_stale_or_short_history_is_rejected_before_model_fit():
     quote["time_utc"] = "2026-11-02T12:20:00Z"
     with pytest.raises(ValueError, match="котировка устарела"):
         analyze(frame, spec, quote, now=now)
+
+
+def test_confirmed_two_hour_mt5_offset_keeps_freshness_checks():
+    frame, spec, quote, now = history()
+    frame["timestamp"] = frame["timestamp"] + pd.Timedelta(hours=2)
+    quote["time_utc"] = "2026-11-02T14:30:00Z"
+    with pytest.raises(ValueError, match="время из будущего"):
+        analyze(frame, spec, quote, now=now)
+    result = analyze(frame, spec, quote, now=now, mt5_offset_hours=2)
+    assert result["mt5_offset_hours"] == 2
+    assert result["last_bar_utc"] == "2026-11-02T12:15:00+00:00"
+    assert result["quote_utc"] == "2026-11-02T12:30:00+00:00"
+    quote["time_utc"] = "2026-11-02T13:30:00Z"
+    with pytest.raises(ValueError, match="котировка устарела"):
+        analyze(frame, spec, quote, now=now, mt5_offset_hours=2)

@@ -47,7 +47,7 @@ def levels(bid: float, ask: float, atr: float, tick: float,
 def analyze(frame: pd.DataFrame, spec: dict, quote: dict, *, now=None,
             horizon: int = 4, atr_factor: float = .1, slippage: float = 0,
             commission_per_unit: float = 0, sl_atr: float = 1.5,
-            reward_risk: float = 2.0) -> dict:
+            reward_risk: float = 2.0, mt5_offset_hours: int = 0) -> dict:
     """Check freshness, evaluate a fixed model, then fit it for a current estimate.
 
     The first 60% trains, next 20% calibrates, and last 20% tests the method.
@@ -57,29 +57,35 @@ def analyze(frame: pd.DataFrame, spec: dict, quote: dict, *, now=None,
     frame = validate(frame)
     if len(frame) != 10000:
         raise ValueError(f"Нужно ровно 10000 закрытых свечей M15; получено {len(frame)}")
+    if not isinstance(mt5_offset_hours, int) or not -12 <= mt5_offset_hours <= 14:
+        raise ValueError("Сдвиг времени MT5 должен быть целым числом часов от -12 до +14")
     now = pd.Timestamp(now if now is not None else datetime.now(timezone.utc))
     if now.tzinfo is None:
         raise ValueError("Текущее время должно содержать часовой пояс")
     now = now.tz_convert("UTC")
-    last_open = frame.timestamp.iloc[-1]
-    last_close = last_open.to_pydatetime() + timedelta(minutes=15)
-    tick_time = pd.Timestamp(quote["time_utc"])
-    if tick_time.tzinfo is None:
+    raw_last_open = frame.timestamp.iloc[-1].to_pydatetime()
+    raw_tick_time = pd.Timestamp(quote["time_utc"])
+    if raw_tick_time.tzinfo is None:
         raise ValueError("Время котировки должно содержать часовой пояс")
-    tick_time = tick_time.tz_convert("UTC")
+    raw_tick_time = raw_tick_time.tz_convert("UTC").to_pydatetime()
+    offset = timedelta(hours=mt5_offset_hours)
+    last_open = raw_last_open - offset
+    last_close = last_open + timedelta(minutes=15)
+    tick_time = raw_tick_time - offset
     bar_age = (now.to_pydatetime() - last_close).total_seconds()
-    tick_age = (now - tick_time).total_seconds()
-    clocks = (f"Сейчас UTC {now.isoformat()}, последняя свеча открыта {last_open.isoformat()}, "
-              f"её закрытие {last_close.isoformat()}, котировка UTC {tick_time.isoformat()}.")
+    tick_age = (now.to_pydatetime() - tick_time).total_seconds()
+    clocks = (f"Сейчас UTC {now.isoformat()}; метки MT5: свеча {raw_last_open.isoformat()}, "
+              f"тик {raw_tick_time.isoformat()}; применён сдвиг MT5 {mt5_offset_hours:+d} ч; "
+              f"после поправки UTC: закрытие свечи {last_close.isoformat()}, тик {tick_time.isoformat()}.")
     if bar_age < 0:
-        raise ValueError(f"Последняя свеча имеет время из будущего. {clocks} Проверьте дату и время Windows и терминала MT5.")
+        raise ValueError(f"Последняя свеча имеет время из будущего. {clocks} Проверьте дату и время Windows и сдвиг времени MT5.")
     if bar_age > 1800:
         hint = ("Котировка тоже устарела: проверьте соединение MT5 и часы работы рынка."
                 if tick_age > 300 else
                 "Котировка свежая, но история нет: откройте график инструмента M15 и дождитесь обновления свечей.")
         raise ValueError(f"Последняя закрытая свеча устарела на {bar_age / 60:.0f} мин. {clocks} {hint}")
     if tick_age < 0:
-        raise ValueError(f"Котировка имеет время из будущего. {clocks} Проверьте дату и время Windows и терминала MT5.")
+        raise ValueError(f"Котировка имеет время из будущего. {clocks} Проверьте дату и время Windows и сдвиг времени MT5.")
     if tick_age > 300:
         raise ValueError(f"Текущая котировка устарела на {tick_age / 60:.0f} мин. {clocks} Проверьте соединение MT5 и часы работы рынка.")
     point = float(spec["point"])
@@ -123,8 +129,9 @@ def analyze(frame: pd.DataFrame, spec: dict, quote: dict, *, now=None,
     if slippage == 0 or commission_per_unit == 0:
         reasons.append("проскальзывание или комиссия указаны нулевыми")
     return {
-        "symbol": spec["name"], "last_bar_utc": frame.timestamp.iloc[-1].isoformat(),
+        "symbol": spec["name"], "last_bar_utc": last_open.isoformat(),
         "quote_utc": tick_time.isoformat(), "bid": bid, "ask": ask,
+        "mt5_offset_hours": mt5_offset_hours,
         "bars": len(frame), "valid": int(valid.sum()), "point": point, "digits": digits,
         "atr": atr, "horizon": horizon, "atr_factor": atr_factor,
         "probabilities": dict(zip(CLASSES, map(float, probability))),
@@ -141,7 +148,8 @@ def format_report(result: dict) -> str:
     validation = result["validation"]
     lines = [
         f"{result['symbol']} M15: {result['bars']} закрытых свечей; пригодно {result['valid']}.",
-        f"Последняя свеча UTC: {result['last_bar_utc']}; котировка UTC: {result['quote_utc']}.",
+        f"Последняя свеча UTC: {result['last_bar_utc']}; котировка UTC: {result['quote_utc']} "
+        f"(сдвиг меток MT5 {result['mt5_offset_hours']:+d} ч).",
         f"Bid={result['bid']:.{decimals}f}; Ask={result['ask']:.{decimals}f}; point={result['point']}; ATR={result['atr']:.{decimals}f}.",
         f"Оценка движения через {result['horizon']} свечи после следующего открытия: " +
         ", ".join(f"{name}={probabilities[name]:.1%}" for name in CLASSES),
@@ -170,6 +178,8 @@ def main():
     parser.add_argument("--commission-per-unit", type=float, default=0, help="комиссия за полный цикл в цене за единицу")
     parser.add_argument("--sl-atr", type=float, default=1.5)
     parser.add_argument("--reward-risk", type=float, default=2.0)
+    parser.add_argument("--mt5-offset-hours", type=int, default=0,
+                        help="на сколько часов метки свечей и тиков MT5 опережают UTC; например 2")
     args = parser.parse_args()
     reader = None
     try:
@@ -180,7 +190,8 @@ def main():
         quote = reader.quote(args.symbol)
         print(format_report(analyze(frame, spec, quote, slippage=args.slippage,
                                     commission_per_unit=args.commission_per_unit,
-                                    sl_atr=args.sl_atr, reward_risk=args.reward_risk)))
+                                    sl_atr=args.sl_atr, reward_risk=args.reward_risk,
+                                    mt5_offset_hours=args.mt5_offset_hours)))
     except (MT5Unavailable, ValueError, KeyError, TypeError) as exc:
         parser.exit(1, f"Прогноз недоступен: {exc}\n")
     finally:
