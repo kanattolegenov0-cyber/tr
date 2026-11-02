@@ -7,9 +7,10 @@ from .data import load, validate
 from .indicators import calculate
 
 
-def label(frame: pd.DataFrame, point: float, horizon: int = 4, atr_factor: float = .1, slippage: float = 0, commission_per_unit: float = 0) -> pd.DataFrame:
+def label(frame: pd.DataFrame, point: float, horizon: int = 4, atr_factor: float = .1, slippage: float = 0, commission_per_unit: float = 0, entry_delay: int = 1) -> pd.DataFrame:
     # Спред MT5 в пунктах нельзя переводить в цену без реальной спецификации.
-    if not math.isfinite(point) or point <= 0 or not isinstance(horizon, int) or horizon < 1:
+    if (not math.isfinite(point) or point <= 0 or not isinstance(horizon, int) or horizon < 1
+            or not isinstance(entry_delay, int) or entry_delay < 1):
         raise ValueError('Требуются положительные point и целый горизонт')
     if not all(math.isfinite(v) and v >= 0 for v in (atr_factor, slippage, commission_per_unit)):
         raise ValueError('Параметры риска и издержек должны быть конечными и неотрицательными')
@@ -21,22 +22,22 @@ def label(frame: pd.DataFrame, point: float, horizon: int = 4, atr_factor: float
         raise ValueError('Исторический spread должен содержать неотрицательные конечные числа')
     indicators = calculate(df)
     # Прокси: цены OHLC — Bid, исторический spread свечи используется как оценка на её открытии.
-    entry_bid = df.open.shift(-1)
-    exit_bid = df.open.shift(-(horizon + 1))
-    entry_spread = spread.shift(-1) * point
-    exit_spread = spread.shift(-(horizon + 1)) * point
+    entry_bid = df.open.shift(-entry_delay)
+    exit_bid = df.open.shift(-(horizon + entry_delay))
+    entry_spread = spread.shift(-entry_delay) * point
+    exit_spread = spread.shift(-(horizon + entry_delay)) * point
     long_net = exit_bid - (entry_bid + entry_spread) - 2*slippage - commission_per_unit
     short_net = entry_bid - (exit_bid + exit_spread) - 2*slippage - commission_per_unit
     threshold = indicators.atr * atr_factor
     # Проверяем каждую пару свечей: суммарной длительности окна недостаточно.
     irregular = (df.timestamp.diff().dt.total_seconds() != 900).astype(int).cumsum()
-    future_irregular = irregular.shift(-(horizon+1)) - irregular
+    future_irregular = irregular.shift(-(horizon + entry_delay)) - irregular
     valid = future_irregular.eq(0) & threshold.notna() & long_net.notna() & short_net.notna()
     outcome = pd.Series(pd.NA, index=df.index, dtype='string')
     outcome.loc[valid] = 'HOLD'
     outcome.loc[valid & (long_net > threshold)] = 'BUY'
     outcome.loc[valid & (short_net > threshold)] = 'SELL'
-    return pd.DataFrame({'timestamp': df.timestamp, 'entry_time':df.timestamp.shift(-1), 'exit_time':df.timestamp.shift(-(horizon+1)), 'atr':indicators.atr, 'threshold':threshold, 'long_net':long_net.where(valid), 'short_net':short_net.where(valid), 'label':outcome})
+    return pd.DataFrame({'timestamp': df.timestamp, 'entry_time':df.timestamp.shift(-entry_delay), 'exit_time':df.timestamp.shift(-(horizon + entry_delay)), 'atr':indicators.atr, 'threshold':threshold, 'long_net':long_net.where(valid), 'short_net':short_net.where(valid), 'label':outcome})
 
 
 def main():
